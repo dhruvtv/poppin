@@ -19,10 +19,10 @@ def get_database_connection(location):
 
 # Unix Timestamp is the time elapsed after Jan 1, 1970 UTC
 # Apple Timestamp is the time elapsed after Jan 1, 1904 local time (!)
-# diff = Epoch diff minus local-UTC diff
-def get_apple_timestamp(unix_timestamp):
+def get_apple_unix_timestamp_diff():
     # diff(Jan 1, 1970 UTC, Jan 1, 1904 UTC) = 2082844800
     UTC_EPOCH_DIFF = 2082844800
+
     #UTC - local time difference (considering daylight savings)
     def utc_local_diff():
         if time.daylight > 0:
@@ -30,8 +30,14 @@ def get_apple_timestamp(unix_timestamp):
         else:
             return time.timezone
 
-    diff = UTC_EPOCH_DIFF - utc_local_diff()
-    return unix_timestamp + diff
+    # diff = Epoch diff minus local-UTC diff
+    return UTC_EPOCH_DIFF - utc_local_diff()
+
+def get_apple_timestamp(unix_timestamp):
+    return unix_timestamp + get_apple_unix_timestamp_diff()
+
+def get_unix_timestamp(apple_timestamp):
+    return apple_timestamp - get_apple_unix_timestamp_diff()
 
 def is_new(cursor):
     table_count = cursor.execute("SELECT COUNT(NAME) "
@@ -85,7 +91,6 @@ def update_deltas(cursor, songs, timestamp):
             key = str(new_song[0])
             deltas[key] = (key, deltas[key][1] - new_song[1], snapshot)
 
-        print deltas.itervalues()
         cursor.executemany("INSERT INTO Deltas("
                            "Key, Delta, Snapshot)"
                            " VALUES(?, ?, ?)", deltas.itervalues())
@@ -96,13 +101,28 @@ def update_deltas(cursor, songs, timestamp):
 #print "Unix time:", unix_time
 #print "Apple time:", get_apple_timestamp(time.time())
 
-songs = get_itunes_songs()
-conn = get_database_connection('poppin.sqlite')
-timestamp = int(get_apple_timestamp(time.time()))
-with conn:
+def main():
+    songs = get_itunes_songs()
+    conn = get_database_connection('poppin.sqlite')
+    timestamp = int(get_apple_timestamp(time.time()))
+    with conn:
+        cursor = conn.cursor()
+        if is_new(cursor):
+            init_database(cursor)
+            init_deltas(cursor, songs, timestamp)
+        else:
+            update_deltas(cursor, songs, timestamp)
+
+def get_latest_snapshot():
+    songs = get_itunes_songs()
+    conn = get_database_connection('poppin.sqlite')
     cursor = conn.cursor()
-    if is_new(cursor):
-        init_database(cursor)
-        init_deltas(cursor, songs, timestamp)
-    else:
-        update_deltas(cursor, songs, timestamp)
+    cursor.execute("SELECT * FROM Deltas WHERE Snapshot = "
+                   "(SELECT MAX(Id) FROM Snapshots)")
+    new_songs = cursor.fetchall()
+
+    for new_song in new_songs:
+        key = str(new_song[0])
+        print songs[key]['Name'], new_song[1], new_song[2]
+
+get_latest_snapshot()
